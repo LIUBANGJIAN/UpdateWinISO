@@ -1,85 +1,72 @@
-name: Windows10_LTSB2016_amd64
-
-on: workflow_dispatch
-#on: [push, pull_request]
+name: Windows10_LTSB2016_amd64_Auto_v16
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
 
 env:
-  Build_VERSION: '14393.8957'
-  FILE_NAME: Windows10_LTSB2016_amd64
+  FILE_NAME_PREFIX: Windows10_LTSB2016_amd64
+  TARGET_TAG: Windows10_LTSB_2016_Builds
 
 jobs:
-  Windows10_LTSB2016_amd64:
+  build:
     runs-on: windows-latest
-
+    permissions: { contents: write }
     steps:
-
-    # 检出本仓库
-    - name: Checkout repository
+    - name: 步骤1: 检出当前仓库
       uses: actions/checkout@v5
 
-    # 检出Win_ISO_Patching_Scripts仓库
-    - name: Checkout repository of Win_ISO_Patching_Scripts
-      run: |
-        cd ..  #Directory: D:\a\UpdateWinISO
-        git clone https://github.com/adavak/Win_ISO_Patching_Scripts.git
+    - name: 步骤2: 设置北京时间
+      run: echo "BJ_TIME=$([System.DateTime]::UtcNow.AddHours(8).ToString('yyyy-MM-dd HH:mm:ss'))" >> $env:GITHUB_ENV
 
-    # 下载镜像
-    - name: download ISO
+    - name: 步骤3: 集成补丁 (W10UI)
       shell: pwsh
       run: |
-        #ls     #Directory: D:\a\UpdateWinISO\UpdateWinISO(即仓库目录)
-        
-        # 切换至Win_ISO_Patching_Scripts根目录 D:\a\UpdateWinISO\Win_ISO_Patching_Scripts
-        cd ..  #Directory: D:\a\UpdateWinISO
-        cd Win_ISO_Patching_Scripts
-        
-        # 下载镜像
-        curl -L -o cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.001 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows10ISO/cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.001
-        curl -L -o cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.002 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows10ISO/cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.002
-        7z x cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.001
-        ls
+        $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
+        git clone --depth 1 https://github.com/adavak/Win_ISO_Patching_Scripts.git $script_dir
+        Push-Location $script_dir
+        curl.exe -L -o ltsb.7z.001 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows10ISO/cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.001
+        curl.exe -L -o ltsb.7z.002 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows10ISO/cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.002
+        7z x ltsb.7z.001
+        Copy-Item -Path (Join-Path $env:GITHUB_WORKSPACE "mycmd" "W10UI.cmd") -Destination (Join-Path $script_dir "W10UI.cmd") -Force
+        ./Start.cmd
+        Pop-Location
 
-    # 集成更新
-    - name: Update WinISO
-      shell: cmd
+    - name: 步骤4: 自动识别版本号并打包
+      shell: pwsh
       run: |
-        :: (可选)替换预设文件W10UI.ini
-        :: copy D:\a\UpdateWinISO\UpdateWinISO\myini\W10UI.ini D:\a\UpdateWinISO\Win_ISO_Patching_Scripts\W10UI.ini /Y
+        $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
+        $isoFile = Get-ChildItem -Path $script_dir -Filter "*.iso" | Select-Object -First 1
+        if ($isoFile.Name -match '(\d+\.\d+)') { $v = $matches[1] } else { $v = "14393.unknown" }
+        echo "DETECTED_VER=$v" >> $env:GITHUB_ENV
+        7z a -v1000M -mx=3 -mmt=on "${{env.FILE_NAME_PREFIX}}-$v.7z" "$($isoFile.FullName)"
 
-        :: 替换W10UI.cmd
-        copy D:\a\UpdateWinISO\UpdateWinISO\mycmd\W10UI.cmd D:\a\UpdateWinISO\Win_ISO_Patching_Scripts\W10UI.cmd /Y
-
-        :: 切换至Win_ISO_Patching_Scripts根目录 D:\a\UpdateWinISO\Win_ISO_Patching_Scripts
-        cd /d D:\a\UpdateWinISO\Win_ISO_Patching_Scripts
-
-        :: 开始集成更新
-        Start.cmd
-
-    # 删除母盘
-    - name: del MasterISO
-      shell: cmd
+    - name: 步骤5: 安全清理旧资产 (修复 Exit Code 1)
+      env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      shell: pwsh
       run: |
-        cd /d D:\a\UpdateWinISO\Win_ISO_Patching_Scripts
-        dir
-        del /F /S /Q cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.iso
-        dir
+        $releaseExist = gh release view ${{ env.TARGET_TAG }} 2>$null
+        if ($releaseExist) {
+            $assets = gh release view ${{ env.TARGET_TAG }} --json assets --jq '.assets[].name'
+            foreach($a in $assets) { if($a -like "${{env.FILE_NAME_PREFIX}}*") { gh release delete-asset ${{ env.TARGET_TAG }} "$a" -y } }
+        }
 
-    # 打包
-    - name: Package binaries
+    - name: 步骤6: 生成 gh-proxy 下载表格
+      shell: pwsh
       run: |
-        #ls     #Directory: D:\a\UpdateWinISO\UpdateWinISO(即仓库目录)
-        7z a -v1950M ${{env.FILE_NAME}}-${{env.Build_VERSION}}.7z ../Win_ISO_Patching_Scripts/*.iso -mx=9
+        $repo = "${{ github.repository }}"; $tag = "${{ env.TARGET_TAG }}"
+        $body = "### 🚀 构建完成`n- **北京时间**: ${{ env.BJ_TIME }}`n- **自动识别版本**: ${{ env.DETECTED_VER }}`n`n#### 文件列表 (可配合 gh-proxy 使用)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
+        Get-ChildItem -Filter "${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*" | ForEach-Object {
+            $body += "| $($_.Name) | [极速下载](https://cdn.gh-proxy.org/https://github.com/$repo/releases/download/$tag/$($_.Name)) |`n"
+        }
+        $body | Out-File -FilePath release_body.txt -Encoding utf8
 
-    # 上传镜像
-    - uses: actions/upload-artifact@v4
-      with:
-        name: ${{env.FILE_NAME}}-${{env.Build_VERSION}}
-        path: ${{env.FILE_NAME}}-${{env.Build_VERSION}}.7z*
-
-    # 发布镜像
-    - name: Release
+    - name: 步骤7: 发布
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: ${{env.FILE_NAME}}-${{env.Build_VERSION}}
-        release_name: ${{env.FILE_NAME}}-${{env.Build_VERSION}}
-        files: ${{env.FILE_NAME}}-${{env.Build_VERSION}}.7z*
+        tag_name: ${{ env.TARGET_TAG }}
+        name: "Windows 10 LTSB 2016 (Build ${{ env.DETECTED_VER }}) Latest"
+        body_path: release_body.txt
+        files: ${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*
+        make_latest: true
+      env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
