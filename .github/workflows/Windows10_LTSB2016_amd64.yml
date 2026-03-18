@@ -23,7 +23,7 @@ jobs:
         echo "BJ_TIME=$($now.ToString('yyyy-MM-dd HH:mm:ss'))" >> $env:GITHUB_ENV
         echo "BJ_DATE=$($now.ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
 
-    - name: 步骤3: 集成补丁
+    - name: 步骤3: 下载补丁工具并集成
       shell: pwsh
       run: |
         $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
@@ -36,7 +36,7 @@ jobs:
         ./Start.cmd
         Pop-Location
 
-    - name: 步骤4: 自动识别版本并打包
+    - name: 步骤4: 自动识别 Build 版本并打包
       shell: pwsh
       run: |
         $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
@@ -45,7 +45,7 @@ jobs:
         echo "DETECTED_VER=$v" >> $env:GITHUB_ENV
         7z a -v1000M -mx=3 -mmt=on "${{env.FILE_NAME_PREFIX}}-$v.7z" "$($iso.FullName)"
 
-    - name: 步骤5: 安全清理旧资产
+    - name: 步骤5: 清理旧版本资产 (Release)
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       shell: pwsh
@@ -55,17 +55,17 @@ jobs:
             foreach($a in $assets) { if($a -like "${{env.FILE_NAME_PREFIX}}*") { gh release delete-asset ${{ env.TARGET_TAG }} "$a" -y } }
         }
 
-    - name: 步骤6: 生成发布日志
+    - name: 步骤6: 生成包含构建时间的发布日志
       shell: pwsh
       run: |
         $repo = "${{ github.repository }}"; $tag = "${{ env.TARGET_TAG }}"
-        $body = "### 🛠️ 构建记录`n- **北京时间**: ${{ env.BJ_TIME }}`n- **系统版本**: Build ${{ env.DETECTED_VER }}`n`n#### 🚀 下载列表 (gh-proxy 加速)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
+        $body = "### 🛠️ 构建信息`n- **北京时间**: ${{ env.BJ_TIME }}`n- **内核版本**: Build ${{ env.DETECTED_VER }}`n`n#### 🚀 极速下载列表 (gh-proxy)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
         Get-ChildItem -Filter "${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*" | ForEach-Object {
             $body += "| $($_.Name) | [点击下载](https://cdn.gh-proxy.org/https://github.com/$repo/releases/download/$tag/$($_.Name)) |`n"
         }
         $body | Out-File -FilePath release_body.txt -Encoding utf8
 
-    - name: 步骤7: 执行发布
+    - name: 步骤7: 执行发布 (标题包含日期)
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.TARGET_TAG }}
