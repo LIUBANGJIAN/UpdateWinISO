@@ -1,4 +1,4 @@
-name: Windows10_LTSB2016_amd64_Auto_v16.2
+name: Windows10_LTSB2016_amd64_Auto
 on:
   workflow_dispatch:
   schedule:
@@ -17,10 +17,11 @@ jobs:
     - name: 步骤1: 检出代码
       uses: actions/checkout@v5
 
-    - name: 步骤2: 设置北京时间
+    - name: 步骤2: 获取北京时间
       run: |
-        echo "BJ_TIME=$([System.DateTime]::UtcNow.AddHours(8).ToString('yyyy-MM-dd HH:mm:ss'))" >> $env:GITHUB_ENV
-        echo "BJ_DATE=$([System.DateTime]::UtcNow.AddHours(8).ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
+        $now = [System.DateTime]::UtcNow.AddHours(8)
+        echo "BJ_TIME=$($now.ToString('yyyy-MM-dd HH:mm:ss'))" >> $env:GITHUB_ENV
+        echo "BJ_DATE=$($now.ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
 
     - name: 步骤3: 集成补丁
       shell: pwsh
@@ -35,17 +36,18 @@ jobs:
         ./Start.cmd
         Pop-Location
 
-    - name: 步骤4: 识别版本并打包
+    - name: 步骤4: 自动识别版本并打包
       shell: pwsh
       run: |
         $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
         $iso = Get-ChildItem -Path $script_dir -Filter "*.iso" | Select-Object -First 1
-        if ($iso.Name -match '(\d+\.\d+)') { $v = $matches[1] } else { $v = "14393.unknown" }
+        if ($iso.Name -match '(\d+\.\d+)') { $v = $matches[1] } else { $v = "14393.latest" }
         echo "DETECTED_VER=$v" >> $env:GITHUB_ENV
         7z a -v1000M -mx=3 -mmt=on "${{env.FILE_NAME_PREFIX}}-$v.7z" "$($iso.FullName)"
 
     - name: 步骤5: 安全清理旧资产
-      env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       shell: pwsh
       run: |
         if (gh release view ${{ env.TARGET_TAG }} 2>$null) {
@@ -53,22 +55,23 @@ jobs:
             foreach($a in $assets) { if($a -like "${{env.FILE_NAME_PREFIX}}*") { gh release delete-asset ${{ env.TARGET_TAG }} "$a" -y } }
         }
 
-    - name: 步骤6: 生成包含时间的下载报告
+    - name: 步骤6: 生成发布日志
       shell: pwsh
       run: |
         $repo = "${{ github.repository }}"; $tag = "${{ env.TARGET_TAG }}"
-        $body = "### 🛠️ 构建信息`n- **构建时间 (北京)**: ${{ env.BJ_TIME }}`n- **集成补丁版本**: ${{ env.DETECTED_VER }}`n`n#### 🚀 极速下载列表 (gh-proxy)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
+        $body = "### 🛠️ 构建记录`n- **北京时间**: ${{ env.BJ_TIME }}`n- **系统版本**: Build ${{ env.DETECTED_VER }}`n`n#### 🚀 下载列表 (gh-proxy 加速)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
         Get-ChildItem -Filter "${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*" | ForEach-Object {
-            $body += "| $($_.Name) | [极速下载](https://cdn.gh-proxy.org/https://github.com/$repo/releases/download/$tag/$($_.Name)) |`n"
+            $body += "| $($_.Name) | [点击下载](https://cdn.gh-proxy.org/https://github.com/$repo/releases/download/$tag/$($_.Name)) |`n"
         }
         $body | Out-File -FilePath release_body.txt -Encoding utf8
 
-    - name: 步骤7: 发布
+    - name: 步骤7: 执行发布
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.TARGET_TAG }}
-        name: "LTSB 2016 Build ${{ env.DETECTED_VER }} (构建日期: ${{ env.BJ_DATE }})"
+        name: "LTSB 2016 Build ${{ env.DETECTED_VER }} (${{ env.BJ_DATE }})"
         body_path: release_body.txt
         files: ${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*
         make_latest: true
-      env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
