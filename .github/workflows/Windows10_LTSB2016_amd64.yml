@@ -4,74 +4,74 @@ on:
   schedule:
     - cron: '0 */6 * * *'
 
-env:
-  FILE_NAME_PREFIX: Windows10_LTSB2016_amd64
-  TARGET_TAG: Windows10_LTSB_2016_Builds
-
 jobs:
   build:
     runs-on: windows-latest
     permissions:
       contents: write
+    env:
+      FILE_NAME_PREFIX: Windows10_LTSB2016_amd64
+      TARGET_TAG: Windows10_LTSB_2016_Builds
     steps:
-    - name: 步骤1: 检出代码
-      uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v5
 
-    - name: 步骤2: 获取北京时间
-      run: |
-        $now = [System.DateTime]::UtcNow.AddHours(8)
-        echo "BJ_TIME=$($now.ToString('yyyy-MM-dd HH:mm:ss'))" >> $env:GITHUB_ENV
-        echo "BJ_DATE=$($now.ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
+      - name: Set Time
+        shell: pwsh
+        run: |
+          $now = [System.DateTime]::UtcNow.AddHours(8)
+          echo "BJ_TIME=$($now.ToString('yyyy-MM-dd HH:mm:ss'))" >> $env:GITHUB_ENV
+          echo "BJ_DATE=$($now.ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
 
-    - name: 步骤3: 下载补丁工具并集成
-      shell: pwsh
-      run: |
-        $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
-        git clone --depth 1 https://github.com/adavak/Win_ISO_Patching_Scripts.git $script_dir
-        Push-Location $script_dir
-        curl.exe -L -o ltsb.7z.001 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows10ISO/cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.001
-        curl.exe -L -o ltsb.7z.002 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows10ISO/cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.002
-        7z x ltsb.7z.001
-        Copy-Item -Path (Join-Path $env:GITHUB_WORKSPACE "mycmd" "W10UI.cmd") -Destination (Join-Path $script_dir "W10UI.cmd") -Force
-        ./Start.cmd
-        Pop-Location
+      - name: Patching
+        shell: pwsh
+        run: |
+          $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
+          git clone --depth 1 https://github.com/adavak/Win_ISO_Patching_Scripts.git $script_dir
+          Push-Location $script_dir
+          curl.exe -L -o ltsb.7z.001 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows10ISO/cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.001
+          curl.exe -L -o ltsb.7z.002 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows10ISO/cn_windows_10_enterprise_2016_ltsb_x64_dvd_9060409.7z.002
+          7z x ltsb.7z.001
+          Copy-Item -Path (Join-Path $env:GITHUB_WORKSPACE "mycmd" "W10UI.cmd") -Destination (Join-Path $script_dir "W10UI.cmd") -Force
+          ./Start.cmd
+          Pop-Location
 
-    - name: 步骤4: 自动识别 Build 版本并打包
-      shell: pwsh
-      run: |
-        $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
-        $iso = Get-ChildItem -Path $script_dir -Filter "*.iso" | Select-Object -First 1
-        if ($iso.Name -match '(\d+\.\d+)') { $v = $matches[1] } else { $v = "14393.latest" }
-        echo "DETECTED_VER=$v" >> $env:GITHUB_ENV
-        7z a -v1000M -mx=3 -mmt=on "${{env.FILE_NAME_PREFIX}}-$v.7z" "$($iso.FullName)"
+      - name: Pack
+        shell: pwsh
+        run: |
+          $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
+          $iso = Get-ChildItem -Path $script_dir -Filter "*.iso" | Select-Object -First 1
+          if ($iso.Name -match '(\d+\.\d+)') { $v = $matches[1] } else { $v = "14393.latest" }
+          echo "DETECTED_VER=$v" >> $env:GITHUB_ENV
+          7z a -v1000M -mx=3 -mmt=on "${{env.FILE_NAME_PREFIX}}-$v.7z" "$($iso.FullName)"
 
-    - name: 步骤5: 清理旧版本资产 (Release)
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: pwsh
-      run: |
-        if (gh release view ${{ env.TARGET_TAG }} 2>$null) {
+      - name: Clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          if (gh release view ${{ env.TARGET_TAG }} 2>$null) {
             $assets = gh release view ${{ env.TARGET_TAG }} --json assets --jq '.assets[].name'
             foreach($a in $assets) { if($a -like "${{env.FILE_NAME_PREFIX}}*") { gh release delete-asset ${{ env.TARGET_TAG }} "$a" -y } }
-        }
+          }
 
-    - name: 步骤6: 生成包含构建时间的发布日志
-      shell: pwsh
-      run: |
-        $repo = "${{ github.repository }}"; $tag = "${{ env.TARGET_TAG }}"
-        $body = "### 🛠️ 构建信息`n- **北京时间**: ${{ env.BJ_TIME }}`n- **内核版本**: Build ${{ env.DETECTED_VER }}`n`n#### 🚀 极速下载列表 (gh-proxy)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
-        Get-ChildItem -Filter "${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*" | ForEach-Object {
+      - name: ReleaseBody
+        shell: pwsh
+        run: |
+          $repo = "${{ github.repository }}"; $tag = "${{ env.TARGET_TAG }}"
+          $body = "### 🛠️ 构建信息`n- **北京时间**: ${{ env.BJ_TIME }}`n- **内核版本**: Build ${{ env.DETECTED_VER }}`n`n#### 🚀 极速下载 (gh-proxy)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
+          Get-ChildItem -Filter "${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*" | ForEach-Object {
             $body += "| $($_.Name) | [点击下载](https://cdn.gh-proxy.org/https://github.com/$repo/releases/download/$tag/$($_.Name)) |`n"
-        }
-        $body | Out-File -FilePath release_body.txt -Encoding utf8
+          }
+          $body | Out-File -FilePath release_body.txt -Encoding utf8
 
-    - name: 步骤7: 执行发布 (标题包含日期)
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ env.TARGET_TAG }}
-        name: "LTSB 2016 Build ${{ env.DETECTED_VER }} (${{ env.BJ_DATE }})"
-        body_path: release_body.txt
-        files: ${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*
-        make_latest: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TARGET_TAG }}
+          name: "LTSB 2016 Build ${{ env.DETECTED_VER }} (${{ env.BJ_DATE }})"
+          body_path: release_body.txt
+          files: ${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
