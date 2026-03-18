@@ -7,23 +7,21 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    # 这一行的缩进非常关键，必须与 runs-on 对齐
     permissions:
       contents: write
-    env:
-      FILE_NAME_PREFIX: Windows10_LTSB2016_amd64
-      TARGET_TAG: Windows10_LTSB_2016_Builds
     steps:
-      - name: Checkout
+      - name: 1. 检出代码
         uses: actions/checkout@v5
 
-      - name: Set Time
+      - name: 2. 获取北京时间
         shell: pwsh
         run: |
           $now = [System.DateTime]::UtcNow.AddHours(8)
           echo "BJ_TIME=$($now.ToString('yyyy-MM-dd HH:mm:ss'))" >> $env:GITHUB_ENV
           echo "BJ_DATE=$($now.ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
 
-      - name: Patching
+      - name: 3. 集成补丁
         shell: pwsh
         run: |
           $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
@@ -36,42 +34,49 @@ jobs:
           ./Start.cmd
           Pop-Location
 
-      - name: Pack
+      - name: 4. 识别版本并打包
         shell: pwsh
         run: |
           $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
           $iso = Get-ChildItem -Path $script_dir -Filter "*.iso" | Select-Object -First 1
           if ($iso.Name -match '(\d+\.\d+)') { $v = $matches[1] } else { $v = "14393.latest" }
           echo "DETECTED_VER=$v" >> $env:GITHUB_ENV
-          7z a -v1000M -mx=3 -mmt=on "${{env.FILE_NAME_PREFIX}}-$v.7z" "$($iso.FullName)"
+          7z a -v1000M -mx=3 -mmt=on "Windows10_LTSB2016_amd64-$v.7z" "$($iso.FullName)"
 
-      - name: Clean
+      - name: 5. 安全清理旧资产
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
+        continue-on-error: true # 关键：即使没找到 Release 也不报错停止
         run: |
-          if (gh release view ${{ env.TARGET_TAG }} 2>$null) {
-            $assets = gh release view ${{ env.TARGET_TAG }} --json assets --jq '.assets[].name'
-            foreach($a in $assets) { if($a -like "${{env.FILE_NAME_PREFIX}}*") { gh release delete-asset ${{ env.TARGET_TAG }} "$a" -y } }
+          $tag = "Windows10_LTSB_2016_Builds"
+          # 检查 Release 是否存在，不存在则跳过
+          $check = gh release view $tag --json tagName --jq '.tagName' 2>$null
+          if ($check -eq $tag) {
+            $assets = gh release view $tag --json assets --jq '.assets[].name' 2>$null
+            foreach($a in $assets) { 
+              if($a -like "Windows10_LTSB2016_amd64*") { 
+                gh release delete-asset $tag "$a" -y 
+              } 
+            }
           }
 
-      - name: ReleaseBody
+      - name: 6. 生成发布正文
         shell: pwsh
         run: |
-          $repo = "${{ github.repository }}"; $tag = "${{ env.TARGET_TAG }}"
-          $body = "### 🛠️ 构建信息`n- **北京时间**: ${{ env.BJ_TIME }}`n- **内核版本**: Build ${{ env.DETECTED_VER }}`n`n#### 🚀 极速下载 (gh-proxy)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
-          Get-ChildItem -Filter "${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*" | ForEach-Object {
+          $repo = "${{ github.repository }}"; $tag = "Windows10_LTSB_2016_Builds"
+          $body = "### 🛠️ 构建信息`n- **构建时间 (北京)**: ${{ env.BJ_TIME }}`n- **补丁版本**: Build ${{ env.DETECTED_VER }}`n`n#### 🚀 下载加速 (gh-proxy)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
+          Get-ChildItem -Filter "Windows10_LTSB2016_amd64-${{ env.DETECTED_VER }}.7z*" | ForEach-Object {
             $body += "| $($_.Name) | [点击下载](https://cdn.gh-proxy.org/https://github.com/$repo/releases/download/$tag/$($_.Name)) |`n"
           }
           $body | Out-File -FilePath release_body.txt -Encoding utf8
 
-      - name: Release
+      - name: 7. 执行发布
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TARGET_TAG }}
+          tag_name: "Windows10_LTSB_2016_Builds"
           name: "LTSB 2016 Build ${{ env.DETECTED_VER }} (${{ env.BJ_DATE }})"
           body_path: release_body.txt
-          files: ${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*
-          make_latest: true
+          files: Windows10_LTSB2016_amd64-${{ env.DETECTED_VER }}.7z*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
