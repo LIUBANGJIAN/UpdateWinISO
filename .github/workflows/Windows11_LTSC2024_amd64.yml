@@ -1,86 +1,62 @@
-name: Windows11_LTSC2024_amd64
-
-on: workflow_dispatch
-#on: [push, pull_request]
-
-env:
-  Build_VERSION: '26200.8037'
-  FILE_NAME: Windows11_LTSC2024_amd64
+name: Windows11_LTSC2024_amd64_Auto
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 */6 * * *'
 
 jobs:
-  Windows11_LTSC2024_amd64:
+  build:
     runs-on: windows-latest
-
+    permissions:
+      contents: write
+    env:
+      FILE_NAME_PREFIX: Windows11_LTSC2024_amd64
+      TARGET_TAG: Windows11_LTSC_2024_Builds
     steps:
-
-    # 检出本仓库
-    - name: Checkout repository
-      uses: actions/checkout@v5
-
-    # 检出Win_ISO_Patching_Scripts仓库
-    - name: Checkout repository of Win_ISO_Patching_Scripts
-      run: |
-        cd ..  #Directory: D:\a\UpdateWinISO
-        git clone https://github.com/adavak/Win_ISO_Patching_Scripts.git
-
-    # 下载镜像
-    - name: download ISO
-      shell: pwsh
-      run: |
-        #ls     #Directory: D:\a\UpdateWinISO\UpdateWinISO(即仓库目录)
-        
-        # 切换至Win_ISO_Patching_Scripts根目录 D:\a\UpdateWinISO\Win_ISO_Patching_Scripts
-        cd ..  #Directory: D:\a\UpdateWinISO
-        cd Win_ISO_Patching_Scripts
-        
-        # 下载镜像
-        curl -L -o zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.001 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows11ISO/zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.001
-        curl -L -o zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.002 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows11ISO/zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.002
-        curl -L -o zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.003 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows11ISO/zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.003
-        7z x zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.001
-        ls
-
-    # 集成更新
-    - name: Update WinISO
-      shell: cmd
-      run: |
-        :: (可选)替换预设文件W10UI.ini
-        :: copy D:\a\UpdateWinISO\UpdateWinISO\myini\W10UI.ini D:\a\UpdateWinISO\Win_ISO_Patching_Scripts\W10UI.ini /Y
-
-        :: 替换W10UI.cmd
-        copy D:\a\UpdateWinISO\UpdateWinISO\mycmd\W10UI.cmd D:\a\UpdateWinISO\Win_ISO_Patching_Scripts\W10UI.cmd /Y
-
-        :: 切换至Win_ISO_Patching_Scripts根目录 D:\a\UpdateWinISO\Win_ISO_Patching_Scripts
-        cd /d D:\a\UpdateWinISO\Win_ISO_Patching_Scripts
-
-        :: 开始集成更新
-        Start.cmd
-
-    # 删除母盘
-    - name: del MasterISO
-      shell: cmd
-      run: |
-        cd /d D:\a\UpdateWinISO\Win_ISO_Patching_Scripts
-        dir
-        del /F /S /Q zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.iso
-        dir
-
-    # 打包
-    - name: Package binaries
-      run: |
-        #ls     #Directory: D:\a\UpdateWinISO\UpdateWinISO(即仓库目录)
-        7z a -v1950M ${{env.FILE_NAME}}-${{env.Build_VERSION}}.7z ../Win_ISO_Patching_Scripts/*.iso -mx=9
-
-    # 上传镜像
-    - uses: actions/upload-artifact@v4
-      with:
-        name: ${{env.FILE_NAME}}-${{env.Build_VERSION}}
-        path: ${{env.FILE_NAME}}-${{env.Build_VERSION}}.7z*
-
-    # 发布镜像
-    - name: Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{env.FILE_NAME}}-${{env.Build_VERSION}}
-        release_name: ${{env.FILE_NAME}}-${{env.Build_VERSION}}
-        files: ${{env.FILE_NAME}}-${{env.Build_VERSION}}.7z*
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Set Time
+        run: |
+          $now = [System.DateTime]::UtcNow.AddHours(8)
+          echo "BJ_TIME=$($now.ToString('yyyy-MM-dd HH:mm:ss'))" >> $env:GITHUB_ENV
+          echo "BJ_DATE=$($now.ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
+      - name: Patching
+        shell: pwsh
+        run: |
+          $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
+          git clone --depth 1 https://github.com/adavak/Win_ISO_Patching_Scripts.git $script_dir
+          Push-Location $script_dir
+          curl.exe -L -o ltsc2024.7z.001 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows11ISO/zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.001
+          curl.exe -L -o ltsc2024.7z.002 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows11ISO/zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.002
+          curl.exe -L -o ltsc2024.7z.003 https://github.com/yuanpeirong/UpdateWinISO/releases/download/Windows11ISO/zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.7z.003
+          7z x ltsc2024.7z.001
+          Copy-Item -Path (Join-Path $env:GITHUB_WORKSPACE "mycmd" "W10UI.cmd") -Destination (Join-Path $script_dir "W10UI.cmd") -Force
+          ./Start.cmd
+          Pop-Location
+      - name: Pack
+        shell: pwsh
+        run: |
+          $script_dir = Join-Path (Get-Item ..).FullName "Win_ISO_Patching_Scripts"
+          $iso = Get-ChildItem -Path $script_dir -Filter "*.iso" | Select-Object -First 1
+          if ($iso.Name -match '(\d+\.\d+)') { $v = $matches[1] } else { $v = "26100.latest" }
+          echo "DETECTED_VER=$v" >> $env:GITHUB_ENV
+          7z a -v1000M -mx=3 -mmt=on "${{env.FILE_NAME_PREFIX}}-$v.7z" "$($iso.FullName)"
+      - name: ReleaseBody
+        shell: pwsh
+        run: |
+          $repo = "${{ github.repository }}"; $tag = "${{ env.TARGET_TAG }}"
+          $body = "### 🛠️ 构建信息`n- **北京时间**: ${{ env.BJ_TIME }}`n- **内核版本**: Build ${{ env.DETECTED_VER }}`n`n#### 🚀 极速下载 (gh-proxy)`n| 文件名 | 下载链接 |`n| :--- | :--- |`n"
+          Get-ChildItem -Filter "${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*" | ForEach-Object {
+            $body += "| $($_.Name) | [点击下载](https://cdn.gh-proxy.org/https://github.com/$repo/releases/download/$tag/$($_.Name)) |`n"
+          }
+          $body | Out-File -FilePath release_body.txt -Encoding utf8
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TARGET_TAG }}
+          name: "LTSC 2024 Build ${{ env.DETECTED_VER }} (${{ env.BJ_DATE }})"
+          body_path: release_body.txt
+          files: ${{env.FILE_NAME_PREFIX}}-${{env.DETECTED_VER}}.7z*
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
